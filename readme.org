@@ -1,0 +1,206 @@
+#+title: notelog - gather notes for publishing
+#+language: en
+#+OPTIONS: toc:t num:nil
+#+SETUPFILE: ~/.emacs.d/src/org-html-themes/setup/theme-readtheorg.setup
+#+HTML_HEAD: <link rel="stylesheet" href="https://eknet.org/css/styles/color-brewer.css">
+#+HTML_HEAD: <script src="https://eknet.org/js/highlight.pack.js"></script>
+#+HTML_HEAD: <script>var hlf = function() { Array.prototype.forEach.call(document.querySelectorAll('pre.src'), function(block) {var css, lang; css = block.getAttribute("class"); lang = css.replace(/src-?| /g, ""); if (lang == "js") {lang = "javascript";} block.setAttribute("class", css + " " + lang); hljs.highlightBlock(block);}); }; addEventListener('DOMContentLoaded', hlf); addEventListener('load', hlf);</script>
+#+HTML_HEAD: <style type="text/css"> pre code { white-space: pre; border: none; font-size: 12px; }</style>
+
+This is for [[http://www.gnu.org/software/emacs/][emacs]] and [[http://orgmode.org][orgmode]].
+
+These are functions to create a log of notes which are spread across
+many files. It is intended to be used prior to invoking
+~org-publish~. I have my notes in many files, for example, when using
+[[https://github.com/bastibe/org-journal][org-journal]] there is a file per day. Ocassionally I'd like to publish
+a note. Org's publishing component works with a folder containing org
+files to publish. The functions provided here gather special tagged
+subtrees from various files and generate a structure suitable for
+~org-publish~.
+
+* Installing
+
+Clone the source and add it to ~load-path~. Then load the file using
+
+#+begin_src emacs-lisp :tangle yes
+(require 'notelog)
+#+end_src
+
+* Usage
+
+** tl;dr version
+
+Set the output directory (it must exist), a list of files to scan and
+a marker tag:
+
+#+begin_src emacs-lisp :tangle yes
+(setq notelog-default-output-directory "/tmp/out")
+(setq notelog-default-input-files '("my/orgfiles/projects" "my/orgfiles/blog.org"))
+(setq notelog-default-marker-tag "publish")
+#+end_src
+
+The input file list can contain files and directories. Each directory
+is replaced with its file contents (org files only). Then you can do
+
+#+BEGIN_EXAMPLE
+M-x notelog-generate-default-notes RET
+#+END_EXAMPLE
+
+Each file in ~notelog-default-input-files~ is scanned for subtrees
+tagged with /publish/ tag. The subtrees are stored into its own files
+in the =/tmp/out= directory and an =index.org= file is created there
+containing links to the files.
+
+
+** long version
+
+The main entry function is ~notelog-create-notes~. It takes a list of
+input files, a marker tag and a output directory:
+
+#+begin_src emacs-lisp :tangle yes
+(defun notelog-create-notes (files markertag out &optional subfolder-fn modify-fn index-template)
+ …)
+#+end_src
+
+ All input files are scanned for subtrees tagged with the
+markertag. Each such subtree is saved to its own file below the output
+directory. Finally, a =index.org= file is created containing links to
+all note files.
+
+This process can be customized: If a ~subfolder-fn~ function is
+specified, it is called with a plist of metadata of the current note
+and is expected to return a list of directory names. Each name results
+in a subdirectory below the output directory.
+
+The ~modify-fn~ function is called with a plist of metadata of the
+current note. The current buffer is the note buffer (containing only
+the marked subtree, prior to saving it). The function is expected to
+modify the buffer, for example add more html headers or otherwise
+tweak the contents. It can return a new metadata plist, which will
+then be used instead of the given one.
+
+The ~index-template~ argument is a file to a template org file that is
+used when creating the index file. A special line '# --links' in there
+is replaced with the list of links to the various note files.
+
+For convenience there is the interactive function
+~notelog-gernate-default-notes~ which does not take arguments, but
+uses global values instead:
+
+- ~notelog-default-output-directory~ the output directory
+- ~notelog-default-modify-fns~ a list of modify functions
+- ~notelog-default-subfolder-fn~ the function for customizing file
+  location
+- ~notelog-default-marker-tag~ the tag used to filter the source files
+- ~notelog-default-input-files~ a list of input files and/or
+  directories to scan. Each directory is replaced by its file contents
+  (org files only)
+- ~notelog-default-index-template~ a file used as a template when
+  creating the index.org file
+
+The function ~notelog-subfolder-per-tag~ takes a list of tag names and
+creates a function suitable as ~subfolder-fn~. If a subtree is tagged
+with one of those tags, the tagname is returned. So this file will be
+stored in a subfolder with the same name as the tag.
+
+There are other variables that can be set:
+
+- ~notelog-remove-marker-tag~ if t (the default) the marker tag is
+  removed from the list of tags in the meta data plist
+- ~notelog-date-property-name~ the property name that is used to look
+  up the date for a subtree (default is "DATE")
+- ~notelog-filename-property~ the property used to get the filename to
+  use. If no such property is defined for a subtree, the filename is
+  generated from the title (default is "NLOG_FILENAME")
+- ~notelog-apply-defaultn-note-mods~ if t (the default) each note
+  buffer is modified such that the highest headline becomes the
+  \#+title attribute
+
+** Example
+
+Here is an example usage:
+
+#+begin_src emacs-lisp :tangle yes
+  (require 'notelog)
+
+  (defun my/add-note-headers (meta)
+    "Adds some html headers to each note  file."
+    (let ((prefix (apply #'concat
+                         (loop for i from 0 to (plist-get meta :subdir-level)
+                               collect "../")))
+          (date (plist-get meta :date))
+          (headers '("#+html_head: <link href='%scss/styles/color-brewer.css' rel='stylesheet'/>"
+                     "#+html_head: <script src='%sjs/jquery-2.1.1.min.js'></script>"
+                     "#+html_head: <script src='%sjs/highlight.pack.js'></script>"
+                     "#+html_head: <script src='%sjs/highlight-load-org.js'></script>"
+                     "#+html_head: <link rel='stylesheet' href='%scss/kube.min.css'/>"
+                     "#+html_head: <script src='%sjs/kube.min.js'></script>")))
+      (goto-char (point-min))
+      (dolist (head headers)
+        (if (find ?% head)
+            (insert (format head prefix) "\n")
+          (insert head "\n")))
+      (if date
+          (insert "#+date: " date "\n")
+        (insert "#+date: " (format-time-string "%Y-%m-%d" (plist-get meta :lastmod)) "\n"))
+      (insert "#+keywords: " (mapconcat #'identity (plist-get meta :tags) " ") "\n")
+      (insert "#+options: <:nil ^:{} d:nil num:nil tags:t \n")))
+
+  (setq notelog-default-marker-tag "publish")
+  (setq notelog-default-output-directory "/home/sites/main")
+  (setq notelog-default-subfolder-fn (notelog-subfolder-per-tag '("linux" "dev")))
+  (setq notelog-default-input-files '("/home/sites/org/blog.org" "/home/sites/org/journal"))
+  (add-to-list 'notelog-default-modify-fns 'my/add-note-headers)
+  (setq notelog-default-index-template "/home/sites/org/index-template.org")
+
+  (require 'ox-publish)
+
+  (setq org-publish-project-alist
+        '(("my-notes"
+           :base-directory "/home/sites/main/"
+           :base-extension "org"
+           :publishing-directory "~/public_html"
+           :recursive t
+           :publishing-function org-html-publish-to-html
+           :headline-levels 4
+           :auto-preamble t)
+          ("my-static"
+           :base-directory "/home/sites/main/"
+           :base-extension "htm\\|html\\|css\\|js\\|png\\|jpg\\|gif\\|pdf\\|mp3\\|ogg\\|swf\\|svg"
+           :publishing-directory "~/public_html"
+           :recursive t
+           :publishing-function org-publish-attachment)
+          ("my-publish"
+           :components ("my-notes" "my-static"))))
+
+  (defun my/generate-website ()
+      (interactive)
+      (let ((org-html-htmlize-output-type nil))
+        (notelog-generate-default-notes)
+        (org-publish "my-publish")))
+#+end_src
+
+This example sets up notelog to search the =blog.org= file and all
+files in the =/home/sites/org/journal= folder for subtrees marked with
+"publish". The result is stored in =/home/sites/main=. Then a
+publish-project is setup to the same path. The last function first
+generates the notes and then publishes the project in one go.
+
+* License
+
+Copyrighted by me 2015-, distributed under GPLv3 or later.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 3, or (at your option)
+any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with GNU Emacs; see the file COPYING. If not, write to the Free
+Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+02110-1301, USA.
