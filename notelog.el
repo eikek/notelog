@@ -226,7 +226,7 @@ it is used as the title of the generated file."
     (dolist (meta metas)
       (let* ((target (plist-get meta :filename))
              (tags (plist-get meta :tags))
-             (link (concat "file:" (substring target (1+ (length out))))))
+             (link (concat "file:" (substring target (1+ (length (expand-file-name out)))))))
         (insert "- ")
         (org-insert-link nil link (plist-get meta :title))
         (when tags
